@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/interuss/dss/pkg/cockroach"
-	"github.com/interuss/dss/pkg/cockroach/flags"
+	"github.com/interuss/dss/pkg/datastore"
+	"github.com/interuss/dss/pkg/datastore/flags"
 	"github.com/interuss/dss/pkg/logging"
 	dssmodels "github.com/interuss/dss/pkg/models"
 	ridmodels "github.com/interuss/dss/pkg/rid/models"
@@ -49,8 +49,8 @@ func setUpStore(ctx context.Context, t *testing.T) (*Store, func()) {
 	}
 }
 
-func newStore(ctx context.Context, t *testing.T, connectParameters cockroach.ConnectParameters) (*Store, error) {
-	db, err := cockroach.Dial(ctx, connectParameters)
+func newStore(ctx context.Context, t *testing.T, connectParameters datastore.ConnectParameters) (*Store, error) {
+	db, err := datastore.Dial(ctx, connectParameters)
 	require.NoError(t, err)
 
 	return &Store{
@@ -210,29 +210,19 @@ func TestBasicTxn(t *testing.T) {
 	tx1, err := store.db.Pool.Begin(ctx)
 	require.NoError(t, err)
 	s1 := &repo{
-		ISA: &isaRepo{
-			Queryable: tx1,
-			logger:    logging.Logger,
-		},
-		Subscription: &subscriptionRepo{
-			Queryable: tx1,
-			logger:    logging.Logger,
-			clock:     DefaultClock,
-		},
+		Queryable: tx1,
+		logger:    logging.Logger,
+		clock:     DefaultClock,
 	}
 
 	tx2, err := store.db.Pool.Begin(ctx)
 	require.NoError(t, err)
 	s2 := &repo{
-		ISA: &isaRepo{
-			Queryable: tx2,
-			logger:    logging.Logger,
-		},
-		Subscription: &subscriptionRepo{
-			Queryable: tx2,
-			logger:    logging.Logger,
-			clock:     DefaultClock,
-		},
+
+		Queryable: tx2,
+		logger:    logging.Logger,
+
+		clock: DefaultClock,
 	}
 
 	subs, err := s1.SearchSubscriptions(ctx, subscription1.Cells)

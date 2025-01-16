@@ -114,8 +114,10 @@ test-go-units-crdb: cleanup-test-go-units-crdb
 	@docker run -d --name dss-crdb-for-testing -p 26257:26257 -p 8080:8080  cockroachdb/cockroach:v24.1.3 start-single-node --insecure > /dev/null
 	@until [ -n "`docker logs dss-crdb-for-testing | grep 'nodeID'`" ]; do echo "Waiting for CRDB to be ready"; sleep 3; done;
 	go run ./cmds/db-manager/main.go migrate --schemas_dir ./build/db_schemas/rid --db_version latest --cockroach_host localhost
+	go run ./cmds/db-manager/main.go migrate --schemas_dir ./build/db_schemas/scd --db_version latest --cockroach_host localhost
 	go test -count=1 -v ./pkg/rid/store/cockroach --cockroach_host localhost --cockroach_port 26257 --cockroach_ssl_mode disable --cockroach_user root --cockroach_db_name rid
 	go test -count=1 -v ./pkg/rid/application --cockroach_host localhost --cockroach_port 26257 --cockroach_ssl_mode disable --cockroach_user root --cockroach_db_name rid
+	go test -count=1 -v ./pkg/scd/store/cockroach --cockroach_host localhost --cockroach_port 26257 --cockroach_ssl_mode disable --cockroach_user root --cockroach_db_name scd
 	@docker stop dss-crdb-for-testing > /dev/null
 	@docker rm dss-crdb-for-testing > /dev/null
 
@@ -139,8 +141,8 @@ restart-all: build-dss down-locally start-locally
 
 .PHONY: start-locally
 start-locally:
+	@test ${COMPOSE_PROFILES} || echo "\033[0;96mTo start Yugabyte datastore, set the docker compose profile to with-yugabyte. Example using env variable: export COMPOSE_PROFILES=with-yugabyte\033[0m"
 	build/dev/run_locally.sh up -d
-	build/dev/wait_for_local_dss.sh
 
 .PHONY: probe-locally
 probe-locally:

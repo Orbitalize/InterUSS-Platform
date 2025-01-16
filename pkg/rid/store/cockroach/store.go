@@ -3,12 +3,13 @@ package cockroach
 import (
 	"context"
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
-	"github.com/interuss/dss/pkg/cockroach/flags"
+	"github.com/interuss/dss/pkg/datastore/flags"
+	dssql "github.com/interuss/dss/pkg/sql"
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/v2/crdb/crdbpgxv5"
 	"github.com/coreos/go-semver/semver"
-	"github.com/interuss/dss/pkg/cockroach"
+	"github.com/interuss/dss/pkg/datastore"
 	"github.com/interuss/dss/pkg/logging"
 	"github.com/interuss/dss/pkg/rid/repos"
 	"github.com/interuss/stacktrace"
@@ -35,13 +36,12 @@ var (
 	// deadline is used
 	// TODO: use this in other function calls
 	DefaultTimeout = 10 * time.Second
-
-	v400 = *semver.New("4.0.0")
 )
 
 type repo struct {
-	repos.ISA
-	repos.Subscription
+	dssql.Queryable
+	clock  clockwork.Clock
+	logger *zap.Logger
 }
 
 // Store is an implementation of store.Store using Cockroach DB as its backend
@@ -50,7 +50,7 @@ type repo struct {
 // TODO: Add the SCD interfaces here, and collapse this store with the
 // outer pkg/cockroach
 type Store struct {
-	db      *cockroach.DB
+	db      *datastore.Datastore
 	logger  *zap.Logger
 	clock   clockwork.Clock
 	version *semver.Version
@@ -60,8 +60,8 @@ type Store struct {
 }
 
 // NewStore returns a Store instance connected to a cockroach instance via db.
-func NewStore(ctx context.Context, db *cockroach.DB, dbName string, logger *zap.Logger) (*Store, error) {
-	vs, err := db.GetVersion(ctx, dbName)
+func NewStore(ctx context.Context, db *datastore.Datastore, dbName string, logger *zap.Logger) (*Store, error) {
+	vs, err := db.GetSchemaVersion(ctx, dbName)
 	if err != nil {
 		return nil, stacktrace.Propagate(err, "Failed to get database schema version for remote ID for db : %s", dbName)
 	}
@@ -87,7 +87,7 @@ func (s *Store) CheckCurrentMajorSchemaVersion(ctx context.Context) error {
 	if err != nil {
 		return stacktrace.Propagate(err, "Failed to get database schema version for remote ID")
 	}
-	if vs == cockroach.UnknownVersion {
+	if vs == datastore.UnknownVersion {
 		return stacktrace.NewError("Remote ID database has not been bootstrapped with Schema Manager, Please check https://github.com/interuss/dss/tree/master/build#updgrading-database-schemas")
 	}
 
@@ -101,14 +101,10 @@ func (s *Store) CheckCurrentMajorSchemaVersion(ctx context.Context) error {
 // Interact implements store.Interactor interface.
 func (s *Store) Interact(ctx context.Context) (repos.Repository, error) {
 	logger := logging.WithValuesFromContext(ctx, s.logger)
-	storeVersion, err := s.GetVersion(ctx)
-	if err != nil {
-		return nil, stacktrace.Propagate(err, "Error determining database RID schema version")
-	}
-
 	return &repo{
-		ISA:          NewISARepo(ctx, s.db.Pool, *storeVersion, logger),
-		Subscription: NewISASubscriptionRepo(ctx, s.db.Pool, *storeVersion, logger, s.clock),
+		Queryable: s.db.Pool,
+		clock:     s.clock,
+		logger:    logger,
 	}, nil
 }
 
@@ -125,16 +121,13 @@ func (s *Store) Transact(ctx context.Context, f func(repo repos.Repository) erro
 
 	ctx = crdb.WithMaxRetries(ctx, flags.ConnectParameters().MaxRetries)
 
-	storeVersion, err := s.GetVersion(ctx)
-	if err != nil {
-		return stacktrace.Propagate(err, "Error determining database RID schema version")
-	}
 	return crdbpgx.ExecuteTx(ctx, s.db.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		// Is this recover still necessary?
 		defer recoverRollbackRepanic(ctx, tx)
 		return f(&repo{
-			ISA:          NewISARepo(ctx, tx, *storeVersion, logger),
-			Subscription: NewISASubscriptionRepo(ctx, tx, *storeVersion, logger, s.clock),
+			Queryable: tx,
+			clock:     s.clock,
+			logger:    logger,
 		})
 	})
 }
@@ -169,7 +162,7 @@ func (s *Store) CleanUp(ctx context.Context) error {
 // If the DB was is not bootstrapped using the schema manager we throw and error
 func (s *Store) GetVersion(ctx context.Context) (*semver.Version, error) {
 	if s.version == nil {
-		vs, err := s.db.GetVersion(ctx, s.DatabaseName)
+		vs, err := s.db.GetSchemaVersion(ctx, s.DatabaseName)
 		if err != nil {
 			return nil, stacktrace.Propagate(err, "Failed to get database schema version for remote ID")
 		}
